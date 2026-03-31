@@ -1,7 +1,6 @@
-#include <stdatomic.h>
 #define _GNU_SOURCE
-// #include <fenv.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,11 +24,11 @@ void linear_hamiltonian_step(WaveVector dst, WaveVector src, sector_t sector, in
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			int excited_atoms = N - n1 - n2;
-			int photon_count = excitations - excited_atoms;
-			if (photon_count < 0) continue; // OPTIMISATION: this state cannot not occupied: src[index] = 0
+			int photon_count = max(0, excitations - excited_atoms);
+			// if (photon_count < 0) continue; // OPTIMISATION: this state cannot not occupied: src[index] = 0
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3);
+				index_t index = indexof3(n1, n2, n3, sector);
 				dst[index] -= src[index] * TimeStep/2 * (Kappa*photon_count + GammaDown*(2 * excited_atoms) + GammaUp*(n1 + n2));
 
 				auto coeff = src[index] * I * TimeStep;
@@ -40,9 +39,11 @@ void linear_hamiltonian_step(WaveVector dst, WaveVector src, sector_t sector, in
 				for_each(ExcitedToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 				for_each(ExcitedToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 
-				static_assert(Phi == 0, "Microwave-drive phase-shift is not yet implemented.");
-				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega;
-				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega;
+				constexpr auto c1 = cosf(Phi) + I*sinf(Phi);
+				constexpr auto c2 = cosf(Phi) - I*sinf(Phi);
+
+				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c1;
+				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c2;
 			}
 		}
 	}
@@ -73,7 +74,7 @@ void exponential_hamiltonian_step(WaveVector wave, sector_t sector, int excitati
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
 			for (int n2 = nu3; n2 <= nu2; ++n2) {
 				for (int n3 = n2; n3 <= n1; ++n3) {
-					index_t index = indexof3(n1, n2, n3);
+					index_t index = indexof3(n1, n2, n3, sector);
 					wave[index] += factor * b[index];
 				}
 			}
@@ -99,8 +100,10 @@ size_t choose_next_jump(float jump_table[TotalJumps])
 }
 
 
-void lindblad_jump(WaveVector wave, LindBladTable table, size_t choice, sector_t *sector)
+void lindblad_jump(WaveVector wave, LindBladTable table, size_t choice, sector_t *sector, int excitations)
 {
+	assert(excitations >= 0);
+
 	static thread_local WaveVector copy;
 	memcpy(copy, wave, sizeof(WaveVector));
 	memset(wave, 0, sizeof(WaveVector));
@@ -114,7 +117,7 @@ void lindblad_jump(WaveVector wave, LindBladTable table, size_t choice, sector_t
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3);
+				index_t index = indexof3(n1, n2, n3, *sector);
 
 				if (table[index][choice].target[0]) wave[table[index][choice].target[0]] += copy[index] * table[index][choice].factor[0];
 				if (table[index][choice].target[1]) wave[table[index][choice].target[1]] += copy[index] * table[index][choice].factor[1];
@@ -128,7 +131,7 @@ void lindblad_jump(WaveVector wave, LindBladTable table, size_t choice, sector_t
 		int nu2 = (next_sector >> 8) & 0xff;
 		int nu3 = (next_sector >> 16) & 0xff;
 
-		update_tables(nu1, nu2, nu3);
+		update_tables(nu1, nu2, nu3, excitations);
 		*sector = next_sector;
 	}
 }
@@ -143,11 +146,11 @@ void lindblad_photon_annihilation(WaveVector wave, sector_t sector, int *excitat
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			int excited_atoms = N - n1 - n2;
-			int photon_count = *excitations - excited_atoms;
-			if (photon_count < 0) continue;
+			int photon_count = max(0, *excitations - excited_atoms);
+			// if (photon_count < 0) continue;
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3);
+				index_t index = indexof3(n1, n2, n3, sector);
 				wave[index] = sqrtf(photon_count);
 			}
 		}
@@ -167,7 +170,7 @@ float compute_norm(WaveVector wave, sector_t sector) {
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3);
+				index_t index = indexof3(n1, n2, n3, sector);
 				norm += cnormf(wave[index]);
 			}
 		}
@@ -183,7 +186,8 @@ atomic(float) average_excited_atoms[IntegrationSteps];
 void run_simulation(int thread_index)
 {
 	set_random_seed(thread_index);
-	struct GT initial = {{ N/2, N/2,0, N,0,0 }}; // all atoms in first ground state
+
+	struct GT initial = {{ N/2, N,0, N,0,0 }}; // half ground1, half ground2
 
 	sector_t sector = sectorof(initial);
 	int excitations = N - initial.M[1] - initial.M[2];
@@ -193,20 +197,20 @@ void run_simulation(int thread_index)
 	int nu3 = initial.M[5];
 
 	static thread_local WaveVector wave = {};
-	wave[indexof(initial)] = 1;
+	wave[indexof(initial, sector)] = 1;
 
 	float jump_table[TotalJumps] = {0};
-	update_tables(nu1, nu2, nu3);
+	update_tables(nu1, nu2, nu3, excitations);
 
 	for (int step = 0; step < IntegrationSteps; ++step) {
 		size_t choice = choose_next_jump(jump_table);
 		size_t table = choice / 8, index = choice % 8;
 
 		switch (table) {
-			case 0: lindblad_jump(wave, Ground1ToExcitedJumps, index, &sector); excitations += 1; break;
-			case 1: lindblad_jump(wave, Ground2ToExcitedJumps, index, &sector); excitations += 1; break;
-			case 2: lindblad_jump(wave, ExcitedToGround1Jumps, index, &sector); excitations = max(0, excitations - 1); break;
-			case 3: lindblad_jump(wave, ExcitedToGround2Jumps, index, &sector); excitations = max(0, excitations - 1); break;
+			case 0: lindblad_jump(wave, Ground1ToExcitedJumps, index, &sector, excitations += 1); break;
+			case 1: lindblad_jump(wave, Ground2ToExcitedJumps, index, &sector, excitations += 1); break;
+			case 2: lindblad_jump(wave, ExcitedToGround1Jumps, index, &sector, excitations -= 1); break;
+			case 3: lindblad_jump(wave, ExcitedToGround2Jumps, index, &sector, excitations -= 1); break;
 			case 4:
 				if (index == 0) lindblad_photon_annihilation(wave, sector, &excitations);
 				else exponential_hamiltonian_step(wave, sector, excitations);
@@ -226,14 +230,14 @@ void run_simulation(int thread_index)
 
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
 			for (int n2 = nu3; n2 <= nu2; ++n2) {
+				int excited_atoms = N - n1 - n2;
+				int photon_count = max(0, excitations - excited_atoms);
+
 				for (int n3 = n2; n3 <= n1; ++n3) {
-					index_t index = indexof3(n1, n2, n3);
+					index_t index = indexof3(n1, n2, n3, sector);
 					wave[index] *= scale;
 
 					auto norm = cnormf(wave[index]);
-
-					int excited_atoms = N - n1 - n2;
-					int photon_count = max(0, excitations - excited_atoms);
 					expected_photon_count += photon_count * norm;
 					expected_excited_atoms += excited_atoms * norm;
 
@@ -250,10 +254,6 @@ void run_simulation(int thread_index)
 		average_excited_atoms[step] += expected_excited_atoms;
 		jump_table[TotalJumps - 1] = TimeStep * Kappa * expected_photon_count;
 	}
-
-	// printf("# Tables: %zu KiB\n", TotalTableBytes >> 10);
-	// printf("# Table Generation: %f ms\n", 1000.0 * (t2 - t1) / CLOCKS_PER_SEC);
-	// printf("# Simulation: %f ms\n", 1000.0 * (t3 - t2) / CLOCKS_PER_SEC);
 }
 
 atomic(int) thread_pool;
@@ -268,7 +268,7 @@ int run_simulation_thread_wrapper(void *) {
 		auto end = get_time_from_os();
 
 		auto complete = atomic_fetch_add(&threads_done, 1) + 1;
-		fprintf(stderr, "Thread [%d/%d] completed in %.3f seconds.\n", complete, TrajectoryCount, end - begin);
+		fprintf(stderr, "Trajectory [%d/%d] completed in %.3f seconds.\n", complete, TrajectoryCount, end - begin);
 	}
 
 	return 0;
@@ -282,7 +282,7 @@ int main() {
 	thrd_t threads[ThreadCount];
 	size_t index = 0;
 
-	for_each(threads) thrd_create(it, run_simulation_thread_wrapper, (void*)index++);
+	for_each(threads) thrd_create(it, run_simulation_thread_wrapper, nullptr);
 	for_each(threads) thrd_join(*it, nullptr);
 
 	for (int i = 0; i < IntegrationSteps; ++i) {

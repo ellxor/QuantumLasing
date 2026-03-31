@@ -153,7 +153,7 @@ bool check_valid_swt(struct GT W_nu) {
 }
 
 
-void hamiltonian_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b,
+void hamiltonian_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b, float64 R[LEVELS],
                                const struct Combination combs[], struct HamiltonianTableEntry table[])
 {
 	constexpr int CombinationCount = 6;
@@ -168,13 +168,13 @@ void hamiltonian_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b,
 		if (!check_valid_swt(W_mu)) continue;
 		if (!check_valid_swt(W_la)) continue;
 
-		table[combs[k].destination].target = indexof(W_la);
-		table[combs[k].destination].factor += ratio(W_nu, W_mu) * zeta(W_mu, a, tau_a) * zeta(W_mu, b, tau_b);
+		table[combs[k].destination].target = indexof(W_la, sectorof(W_nu));
+		table[combs[k].destination].factor += R[tau_b[LEVELS - 1] - 1] * zeta(W_mu, a, tau_a) * zeta(W_mu, b, tau_b);
 	}
 }
 
 
-void lindblad_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b,
+void lindblad_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b, float64 R[LEVELS],
 	                    const struct Combination combs[], struct LindbladTableEntry table[])
 {
 	constexpr int CombinationCount = 18;
@@ -194,13 +194,13 @@ void lindblad_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b,
 		if (!check_valid_swt(W_la)) continue;
 
 		factors[k] = zeta(W_mu, a, tau_a) * zeta(W_mu, b, tau_b);
-		ratios[k] = ratio(W_nu, W_mu);
+		ratios[k] = R[tau_b[LEVELS - 1] - 1];
 
 		auto dest = combs[k].destination;
 		size_t i = dest / 2, j = dest % 2;
 
 		table[i].sector = sectorof(W_la);
-		table[i].target[j] = indexof(W_la);
+		table[i].target[j] = indexof(W_la, table[i].sector);
 		table[i].factor[j] += ratios[k] * pow(factors[k], 2);
 	}
 
@@ -248,7 +248,7 @@ void lindblad_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b,
 }
 
 
-void update_tables(int nu1, int nu2, int nu3) {
+void update_tables(int nu1, int nu2, int nu3, int excitations) {
 	constexpr struct Combination GroundToGroundCombinations[] = {
 		{0,0,0}, {1,1,0}, {2,2,0}, {3,3,0}, {4,4,0}, {5,5,0}
 	};
@@ -280,27 +280,43 @@ void update_tables(int nu1, int nu2, int nu3) {
 	memset(ExcitedToGround2Jumps, 0, sizeof ExcitedToGround2Jumps);
 
 	struct GT W_nu = {{ [3] = nu1, [4] = nu2, [5] = nu3 }};
+	sector_t sector = sectorof3(nu1, nu2, nu3);
+
+	float64 ratios[LEVELS] = {};
+
+	for (int k = 0; k < LEVELS; ++k) {
+		constexpr size_t offset = LEVELS*(LEVELS-1)/2;
+		if (!W_nu.M[offset + k]) continue;
+
+		struct GT W_mu = W_nu;
+		W_mu.M[offset + k] -= 1;
+		ratios[k] = ratio(W_nu, W_mu);
+	}
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
+			// int excited_atoms = N - n1 - n2;
+			// int photon_count = excitations - excited_atoms;
+			// if (photon_count < 0) continue; // OPTIMISATION: this state cannot not occupied: src[index] = 0
+
 			for (int n3 = n2; n3 <= n1; ++n3) {
 				W_nu.M[0] = n3;
 				W_nu.M[1] = n1;
 				W_nu.M[2] = n2;
 
-				index_t index = indexof(W_nu);
+				index_t index = indexof3(n1, n2, n3, sector);
 
-				hamiltonian_clebsh_gordan(W_nu, EXCITED, GROUND1, GroundToExcitedCombinations, Ground1ToExcited[index]);
-				hamiltonian_clebsh_gordan(W_nu, EXCITED, GROUND2, GroundToExcitedCombinations, Ground2ToExcited[index]);
-				hamiltonian_clebsh_gordan(W_nu, GROUND1, EXCITED, ExcitedToGroundCombinations, ExcitedToGround1[index]);
-				hamiltonian_clebsh_gordan(W_nu, GROUND2, EXCITED, ExcitedToGroundCombinations, ExcitedToGround1[index]);
-				hamiltonian_clebsh_gordan(W_nu, GROUND1, GROUND1, GroundToGroundCombinations,  Ground1ToGround2[index]);
-				hamiltonian_clebsh_gordan(W_nu, GROUND1, GROUND2, GroundToGroundCombinations,  Ground2ToGround1[index]);
+				hamiltonian_clebsh_gordan(W_nu, EXCITED, GROUND1, ratios, GroundToExcitedCombinations, Ground1ToExcited[index]);
+				hamiltonian_clebsh_gordan(W_nu, EXCITED, GROUND2, ratios, GroundToExcitedCombinations, Ground2ToExcited[index]);
+				hamiltonian_clebsh_gordan(W_nu, GROUND1, EXCITED, ratios, ExcitedToGroundCombinations, ExcitedToGround1[index]);
+				hamiltonian_clebsh_gordan(W_nu, GROUND2, EXCITED, ratios, ExcitedToGroundCombinations, ExcitedToGround1[index]);
+				hamiltonian_clebsh_gordan(W_nu, GROUND1, GROUND1, ratios, GroundToGroundCombinations,  Ground1ToGround2[index]);
+				hamiltonian_clebsh_gordan(W_nu, GROUND1, GROUND2, ratios, GroundToGroundCombinations,  Ground2ToGround1[index]);
 
-				lindblad_clebsh_gordan(W_nu, EXCITED, GROUND1, GroundToExcitedCombinations, Ground1ToExcitedJumps[index]);
-				lindblad_clebsh_gordan(W_nu, EXCITED, GROUND2, GroundToExcitedCombinations, Ground2ToExcitedJumps[index]);
-				lindblad_clebsh_gordan(W_nu, GROUND1, EXCITED, ExcitedToGroundCombinations, ExcitedToGround1Jumps[index]);
-				lindblad_clebsh_gordan(W_nu, GROUND2, EXCITED, ExcitedToGroundCombinations, ExcitedToGround2Jumps[index]);
+				lindblad_clebsh_gordan(W_nu, EXCITED, GROUND1, ratios, GroundToExcitedCombinations, Ground1ToExcitedJumps[index]);
+				lindblad_clebsh_gordan(W_nu, EXCITED, GROUND2, ratios, GroundToExcitedCombinations, Ground2ToExcitedJumps[index]);
+				lindblad_clebsh_gordan(W_nu, GROUND1, EXCITED, ratios, ExcitedToGroundCombinations, ExcitedToGround1Jumps[index]);
+				lindblad_clebsh_gordan(W_nu, GROUND2, EXCITED, ratios, ExcitedToGroundCombinations, ExcitedToGround2Jumps[index]);
 
 				// Table Check:
 				// float64 a = 0, b = 0, c = 0, d = 0;
