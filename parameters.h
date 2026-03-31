@@ -26,3 +26,7 @@ constexpr float GammaDown = Omega/2 - GammaUp;
 // Integration parameters
 constexpr float TimeStep = 1e-3f;
 constexpr int IntegrationSteps = 40'000;
+
+// Misc.
+constexpr int ThreadCount = 12;
+constexpr int TrajectoryCount = 50;

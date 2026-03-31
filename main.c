@@ -1,5 +1,6 @@
+#include <stdatomic.h>
 #define _GNU_SOURCE
-#include <fenv.h>
+// #include <fenv.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -179,7 +180,7 @@ float compute_norm(WaveVector wave, sector_t sector) {
 atomic(float) average_photon_count[IntegrationSteps];
 atomic(float) average_excited_atoms[IntegrationSteps];
 
-void run_simulation(size_t thread_index)
+void run_simulation(int thread_index)
 {
 	set_random_seed(thread_index);
 	struct GT initial = {{ N/2, N/2,0, N,0,0 }}; // all atoms in first ground state
@@ -255,29 +256,34 @@ void run_simulation(size_t thread_index)
 	// printf("# Simulation: %f ms\n", 1000.0 * (t3 - t2) / CLOCKS_PER_SEC);
 }
 
-int run_simulation_thread_wrapper(void *arg) {
-	auto begin = get_time_from_os();
-	run_simulation((size_t)arg);
-	auto end = get_time_from_os();
+atomic(int) thread_pool;
+atomic(int) threads_done;
 
-	fprintf(stderr, "Thread %zu completed in %.3f seconds.\n", (size_t)arg, end - begin);
+int run_simulation_thread_wrapper(void *) {
+	int next;
+
+	while ((next = atomic_fetch_add(&thread_pool, -1)) > 0) {
+		auto begin = get_time_from_os();
+		run_simulation(next);
+		auto end = get_time_from_os();
+
+		auto complete = atomic_fetch_add(&threads_done, 1) + 1;
+		fprintf(stderr, "Thread [%d/%d] completed in %.3f seconds.\n", complete, TrajectoryCount, end - begin);
+	}
+
 	return 0;
 }
 
 
 int main() {
-	constexpr int Repeats = 10;
-	constexpr int ThreadCount = 12;
-	constexpr int TrajectoryCount = Repeats * ThreadCount;
+	thread_pool = TrajectoryCount;
+	threads_done = 0;
 
 	thrd_t threads[ThreadCount];
 	size_t index = 0;
 
-	for (int i = 0; i < Repeats; ++i) {
-		for_each(threads) thrd_create(it, run_simulation_thread_wrapper, (void*)index++);
-		for_each(threads) thrd_join(*it, nullptr);
-		fprintf(stderr, "%d/%d complete.\n", i + 1, Repeats);
-	}
+	for_each(threads) thrd_create(it, run_simulation_thread_wrapper, (void*)index++);
+	for_each(threads) thrd_join(*it, nullptr);
 
 	for (int i = 0; i < IntegrationSteps; ++i) {
 		printf("%g\t%g\n",
