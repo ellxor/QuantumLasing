@@ -17,15 +17,14 @@ void linear_hamiltonian_step(WaveVector dst, WaveVector src, sector_t sector, in
 {
 	memset(dst, 0, sizeof(WaveVector));
 
-	int nu1 =  sector        & 0xff;
-	int nu2 = (sector >>  8) & 0xff;
-	int nu3 = (sector >> 16) & 0xff;
+	int nu1, nu2, nu3;
+	read_sector(sector, &nu1, &nu2, &nu3);
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			int excited_atoms = N - n1 - n2;
-			int photon_count = max(0, excitations - excited_atoms);
-			// if (photon_count < 0) continue; // OPTIMISATION: this state cannot not occupied: src[index] = 0
+			int photon_count = excitations - excited_atoms;
+			if (photon_count < 0) continue;
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
 				index_t index = indexof3(n1, n2, n3, sector);
@@ -34,16 +33,16 @@ void linear_hamiltonian_step(WaveVector dst, WaveVector src, sector_t sector, in
 				auto coeff = src[index] * I * TimeStep;
 				dst[index] -= coeff * (OmegaC * photon_count + OmegaE * excited_atoms);
 
-				for_each(Ground1ToExcited[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count);
-				for_each(Ground2ToExcited[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count);
-				for_each(ExcitedToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
-				for_each(ExcitedToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
+				for_each(Ground1ToExcited[index]) if(it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count);
+				for_each(Ground2ToExcited[index]) if(it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count);
+				for_each(ExcitedToGround1[index]) if(it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
+				for_each(ExcitedToGround2[index]) if(it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 
 				constexpr auto c1 = cosf(Phi) + I*sinf(Phi);
 				constexpr auto c2 = cosf(Phi) - I*sinf(Phi);
 
-				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c1;
-				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c2;
+				for_each(Ground1ToGround2[index]) if(it->target) dst[it->target] -= it->factor * coeff * Omega * c1;
+				for_each(Ground2ToGround1[index]) if(it->target) dst[it->target] -= it->factor * coeff * Omega * c2;
 			}
 		}
 	}
@@ -59,10 +58,8 @@ void exponential_hamiltonian_step(WaveVector wave, sector_t sector, int excitati
 	auto a = wave; // Controlled by pointers which are cheap to swap.
 	auto b = _b;
 
-	int nu1 =  sector        & 0xff;
-	int nu2 = (sector >>  8) & 0xff;
-	int nu3 = (sector >> 16) & 0xff;
-
+	int nu1, nu2, nu3;
+	read_sector(sector, &nu1, &nu2, &nu3);
 	int factorial = 1;
 
 	for (int i = 1; i <= RungeKuttaPoly; ++i) {
@@ -108,10 +105,8 @@ void lindblad_jump(WaveVector wave, LindBladTable table, size_t choice, sector_t
 	memcpy(copy, wave, sizeof(WaveVector));
 	memset(wave, 0, sizeof(WaveVector));
 
-	int nu1 =  *sector        & 0xff;
-	int nu2 = (*sector >>  8) & 0xff;
-	int nu3 = (*sector >> 16) & 0xff;
-
+	int nu1, nu2, nu3;
+	read_sector(*sector, &nu1, &nu2, &nu3);
 	sector_t next_sector = 0;
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
@@ -126,32 +121,25 @@ void lindblad_jump(WaveVector wave, LindBladTable table, size_t choice, sector_t
 		}
 	}
 
-	if (next_sector != *sector) {
-		int nu1 = next_sector & 0xff;
-		int nu2 = (next_sector >> 8) & 0xff;
-		int nu3 = (next_sector >> 16) & 0xff;
-
-		update_tables(nu1, nu2, nu3, excitations);
-		*sector = next_sector;
-	}
+	update_tables(next_sector, excitations);
+	*sector = next_sector;
 }
 
 
 void lindblad_photon_annihilation(WaveVector wave, sector_t sector, int *excitations)
 {
-	int nu1 =  sector        & 0xff;
-	int nu2 = (sector >>  8) & 0xff;
-	int nu3 = (sector >> 16) & 0xff;
+	int nu1, nu2, nu3;
+	read_sector(sector, &nu1, &nu2, &nu3);
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			int excited_atoms = N - n1 - n2;
-			int photon_count = max(0, *excitations - excited_atoms);
-			// if (photon_count < 0) continue;
+			int photon_count = *excitations - excited_atoms;
+			photon_count = max(0, photon_count);
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
 				index_t index = indexof3(n1, n2, n3, sector);
-				wave[index] = sqrtf(photon_count);
+				wave[index] *= sqrtf(photon_count);
 			}
 		}
 	}
@@ -160,15 +148,16 @@ void lindblad_photon_annihilation(WaveVector wave, sector_t sector, int *excitat
 }
 
 
-float compute_norm(WaveVector wave, sector_t sector) {
-	int nu1 = sector & 0xff;
-	int nu2 = (sector >> 8) & 0xff;
-	int nu3 = (sector >> 16) & 0xff;
-
+float compute_norm(WaveVector wave, sector_t sector, int excitations) {
+	int nu1, nu2, nu3;
+	read_sector(sector, &nu1, &nu2, &nu3);
 	float norm = 0;
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
+			int excitons = N - n1 - n2;
+			int photon_count = excitations - excitons;
+
 			for (int n3 = n2; n3 <= n1; ++n3) {
 				index_t index = indexof3(n1, n2, n3, sector);
 				norm += cnormf(wave[index]);
@@ -179,28 +168,24 @@ float compute_norm(WaveVector wave, sector_t sector) {
 	return norm;
 }
 
-
-atomic(float) average_photon_count[IntegrationSteps];
-atomic(float) average_excited_atoms[IntegrationSteps];
+constexpr float RecordScaling = 1e6;
+atomic(size_t) average_photon_count[IntegrationSteps];
+atomic(size_t) average_excited_atoms[IntegrationSteps];
 
 void run_simulation(int thread_index)
 {
 	set_random_seed(thread_index);
-
-	struct GT initial = {{ N/2, N,0, N,0,0 }}; // half ground1, half ground2
+	constexpr struct GT initial = {{ (N+1)/2, N,0, N,0,0 }}; // half ground1, half ground2
 
 	sector_t sector = sectorof(initial);
 	int excitations = N - initial.M[1] - initial.M[2];
 
-	int nu1 = initial.M[3];
-	int nu2 = initial.M[4];
-	int nu3 = initial.M[5];
-
-	static thread_local WaveVector wave = {};
+	static thread_local WaveVector wave;
+	memset(wave, 0, sizeof(WaveVector));
 	wave[indexof(initial, sector)] = 1;
 
+	update_tables(sector, excitations);
 	float jump_table[TotalJumps] = {0};
-	update_tables(nu1, nu2, nu3, excitations);
 
 	for (int step = 0; step < IntegrationSteps; ++step) {
 		size_t choice = choose_next_jump(jump_table);
@@ -216,16 +201,14 @@ void run_simulation(int thread_index)
 				else exponential_hamiltonian_step(wave, sector, excitations);
 		}
 
-		float inner_product = compute_norm(wave, sector);
+		float inner_product = compute_norm(wave, sector, excitations);
 		float scale = 1.0f / sqrtf(inner_product);
 
 		float expected_photon_count = 0;
 		float expected_excited_atoms = 0;
 
-		int nu1 = sector & 0xff;
-		int nu2 = (sector >> 8) & 0xff;
-		int nu3 = (sector >> 16) & 0xff;
-
+		int nu1, nu2, nu3;
+		read_sector(sector, &nu1, &nu2, &nu3);
 		memset(jump_table, 0, sizeof jump_table);
 
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
@@ -250,14 +233,16 @@ void run_simulation(int thread_index)
 			}
 		}
 
-		average_photon_count[step] += expected_photon_count;
-		average_excited_atoms[step] += expected_excited_atoms;
 		jump_table[TotalJumps - 1] = TimeStep * Kappa * expected_photon_count;
+
+		average_photon_count[step] += (size_t)(expected_photon_count * RecordScaling);
+		average_excited_atoms[step] += (size_t)(expected_excited_atoms * RecordScaling);
 	}
 }
 
 atomic(int) thread_pool;
-atomic(int) threads_done;
+atomic(int) threads_done = 0;
+atomic(size_t) millis = 0;
 
 int run_simulation_thread_wrapper(void *) {
 	int next;
@@ -266,6 +251,8 @@ int run_simulation_thread_wrapper(void *) {
 		auto begin = get_time_from_os();
 		run_simulation(next);
 		auto end = get_time_from_os();
+
+		millis += (size_t)((end - begin) * 1000);
 
 		auto complete = atomic_fetch_add(&threads_done, 1) + 1;
 		fprintf(stderr, "Trajectory [%d/%d] completed in %.3f seconds.\n", complete, TrajectoryCount, end - begin);
@@ -276,6 +263,8 @@ int run_simulation_thread_wrapper(void *) {
 
 
 int main() {
+	fprintf(stderr, "Parameters: N = %d, GammaUp = %g\n", N, GammaUp);
+	fprintf(stderr, "Allocating tables: %zu MB.\n", (TotalTableBytes * ThreadCount) >> 20);
 	thread_pool = TrajectoryCount;
 	threads_done = 0;
 
@@ -287,7 +276,9 @@ int main() {
 
 	for (int i = 0; i < IntegrationSteps; ++i) {
 		printf("%g\t%g\n",
-			average_photon_count[i] / TrajectoryCount,
-			average_excited_atoms[i] / TrajectoryCount);
+			(float64)average_photon_count[i]  / RecordScaling / TrajectoryCount,
+			(float64)average_excited_atoms[i] / RecordScaling / TrajectoryCount);
 	}
+
+	printf("# Time per trajectory: %zu ms\n", millis / TrajectoryCount);
 }

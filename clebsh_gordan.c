@@ -89,7 +89,7 @@ float64 A(struct GT W_mu, int l, Tau tau) {
 	return sign * sqrt(factor);
 }
 
-float64 zeta(struct GT W_mu, int i, Tau tau) {
+float64 zeta(struct GT W_mu, EnergyLevel i, Tau tau) {
 	int numerator = 1;
 	int denominator = 1;
 
@@ -111,6 +111,37 @@ float64 zeta(struct GT W_mu, int i, Tau tau) {
 
 	return factor;
 }
+
+// #define zeta_hash(level, index) ((index) << 2 | (level))
+
+// float64 zeta_compressed(struct GT W_mu, EnergyLevel i, int tau_index) {
+// 	float64 n1 = W_mu.M[1];
+// 	float64 n2 = W_mu.M[2];
+// 	float64 n3 = W_mu.M[0];
+// 	float64 nu1 = W_mu.M[3];
+// 	float64 nu2 = W_mu.M[4];
+// 	float64 nu3 = W_mu.M[5];
+
+// 	switch(zeta_hash(i, tau_index)) {
+// 		case zeta_hash(GROUND1, 0): return  sqrt((n1 - nu2 + 1)*(n1 - nu3 + 2)*(-n2 + n3 + 1)*(-n2 + nu1 + 2)/((n1 - n2 + 1)*(n1 - n2 + 2)*(nu1 - nu2 + 1)*(nu1 - nu3 + 2)));
+// 		case zeta_hash(GROUND1, 1): return -sqrt(-(n1 - n3)*(n2 - nu2)*(-n1 + nu1 + 1)*(n2 - nu3 + 1)/((n1 - n2)*(n1 - n2 + 1)*(nu1 - nu2 + 1)*(nu1 - nu3 + 2)));
+// 		case zeta_hash(GROUND1, 2): return -sqrt(-(n1 - nu1)*(n1 - nu3 + 2)*(-n2 + n3 + 1)*(-n2 + nu2 + 1)/((n1 - n2 + 1)*(n1 - n2 + 2)*(nu1 - nu2 + 1)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND1, 3): return -sqrt((n1 - n3)*(n1 - nu2)*(-n2 + nu1 + 1)*(n2 - nu3 + 1)/((n1 - n2)*(n1 - n2 + 1)*(nu1 - nu2 + 1)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND1, 4): return -sqrt(-(n1 - nu1)*(n2 - nu3)*(n1 - nu2 + 1)*(-n2 + n3 + 1)/((n1 - n2 + 1)*(n1 - n2 + 2)*(nu1 - nu3 + 2)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND1, 5): return  sqrt(-(n1 - n3)*(n2 - nu2)*(n1 - nu3 + 1)*(-n2 + nu1 + 1)/((n1 - n2)*(n1 - n2 + 1)*(nu1 - nu3 + 2)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND2, 0): return  sqrt((n1 - n3 + 1)*(n1 - nu2 + 1)*(n1 - nu3 + 2)*(-n2 + nu1 + 2)/((n1 - n2 + 1)*(n1 - n2 + 2)*(nu1 - nu2 + 1)*(nu1 - nu3 + 2)));
+// 		case zeta_hash(GROUND2, 1): return  sqrt(-(-n2 + n3)*(n2 - nu2)*(-n1 + nu1 + 1)*(n2 - nu3 + 1)/((n1 - n2)*(n1 - n2 + 1)*(nu1 - nu2 + 1)*(nu1 - nu3 + 2)));
+// 		case zeta_hash(GROUND2, 2): return -sqrt(-(n1 - nu1)*(n1 - n3 + 1)*(n1 - nu3 + 2)*(-n2 + nu2 + 1)/((n1 - n2 + 1)*(n1 - n2 + 2)*(nu1 - nu2 + 1)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND2, 3): return  sqrt((n1 - nu2)*(-n2 + n3)*(-n2 + nu1 + 1)*(n2 - nu3 + 1)/((n1 - n2)*(n1 - n2 + 1)*(nu1 - nu2 + 1)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND2, 4): return -sqrt(-(n1 - nu1)*(n2 - nu3)*(n1 - n3 + 1)*(n1 - nu2 + 1)/((n1 - n2 + 1)*(n1 - n2 + 2)*(nu1 - nu3 + 2)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(GROUND2, 5): return -sqrt((n2 - n3)*(n2 - nu2)*(n1 - nu3 + 1)*(-n2 + nu1 + 1)/((n1 - n2)*(n1 - n2 + 1)*(nu1 - nu3 + 2)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(EXCITED, 0): return  sqrt((-n1 + nu1 + 1)*(-n2 + nu1 + 2)/((nu1 - nu2 + 1)*(nu1 - nu3 + 2)));
+// 		case zeta_hash(EXCITED, 1): return  sqrt((n1 - nu2)*(-n2 + nu2 + 1)/((nu1 - nu2 + 1)*(nu2 - nu3 + 1)));
+// 		case zeta_hash(EXCITED, 2): return  sqrt((n2 - nu3)*(n1 - nu3 + 1)/((nu1 - nu3 + 2)*(nu2 - nu3 + 1)));
+// 	}
+
+// 	__builtin_unreachable();
+// }
 
 float64 log_f_factor(struct GT W_nu) {
 	int nu1 = W_nu.M[3];
@@ -170,6 +201,9 @@ void hamiltonian_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b, flo
 
 		table[combs[k].destination].target = indexof(W_la, sectorof(W_nu));
 		table[combs[k].destination].factor += R[tau_b[LEVELS - 1] - 1] * zeta(W_mu, a, tau_a) * zeta(W_mu, b, tau_b);
+		// table[combs[k].destination].factor += R[tau_b[LEVELS - 1] - 1]
+		// 	* zeta_compressed(W_mu, a, combs[k].insert_index)
+		// 	* zeta_compressed(W_mu, b, combs[k].remove_index);
 	}
 }
 
@@ -194,6 +228,7 @@ void lindblad_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b, float6
 		if (!check_valid_swt(W_la)) continue;
 
 		factors[k] = zeta(W_mu, a, tau_a) * zeta(W_mu, b, tau_b);
+		// factors[k] = zeta_compressed(W_mu, a, combs[k].insert_index) * zeta_compressed(W_mu, b, combs[k].remove_index);
 		ratios[k] = R[tau_b[LEVELS - 1] - 1];
 
 		auto dest = combs[k].destination;
@@ -248,7 +283,7 @@ void lindblad_clebsh_gordan(struct GT W_nu, EnergyLevel a, EnergyLevel b, float6
 }
 
 
-void update_tables(int nu1, int nu2, int nu3, int excitations) {
+void update_tables(sector_t sector, int excitations) {
 	constexpr struct Combination GroundToGroundCombinations[] = {
 		{0,0,0}, {1,1,0}, {2,2,0}, {3,3,0}, {4,4,0}, {5,5,0}
 	};
@@ -279,25 +314,25 @@ void update_tables(int nu1, int nu2, int nu3, int excitations) {
 	memset(ExcitedToGround1Jumps, 0, sizeof ExcitedToGround1Jumps);
 	memset(ExcitedToGround2Jumps, 0, sizeof ExcitedToGround2Jumps);
 
+	int nu1, nu2, nu3;
+	read_sector(sector, &nu1, &nu2, &nu3);
 	struct GT W_nu = {{ [3] = nu1, [4] = nu2, [5] = nu3 }};
-	sector_t sector = sectorof3(nu1, nu2, nu3);
 
 	float64 ratios[LEVELS] = {};
 
 	for (int k = 0; k < LEVELS; ++k) {
 		constexpr size_t offset = LEVELS*(LEVELS-1)/2;
-		if (!W_nu.M[offset + k]) continue;
-
 		struct GT W_mu = W_nu;
+
 		W_mu.M[offset + k] -= 1;
 		ratios[k] = ratio(W_nu, W_mu);
 	}
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
-			// int excited_atoms = N - n1 - n2;
-			// int photon_count = excitations - excited_atoms;
-			// if (photon_count < 0) continue; // OPTIMISATION: this state cannot not occupied: src[index] = 0
+			int excited_atoms = N - n1 - n2;
+			int photon_count = excitations - excited_atoms;
+			if (photon_count < 0) continue; // OPTIMISATION: this state cannot not occupied: src[index] = 0
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
 				W_nu.M[0] = n3;
