@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <threads.h>
+#include <pthread.h>
 
 #include "clebsh_gordan.c"
 #include "parameters.h"
@@ -244,7 +244,7 @@ atomic(int) thread_pool;
 atomic(int) threads_done = 0;
 atomic(size_t) millis = 0;
 
-int run_simulation_thread_wrapper(void *) {
+void *run_simulation_thread_wrapper(void *) {
 	int next;
 
 	while ((next = atomic_fetch_add(&thread_pool, -1)) > 0) {
@@ -258,7 +258,7 @@ int run_simulation_thread_wrapper(void *) {
 		fprintf(stderr, "Trajectory [%d/%d] completed in %.3f seconds.\n", complete, TrajectoryCount, end - begin);
 	}
 
-	return 0;
+	return nullptr;
 }
 
 
@@ -268,11 +268,11 @@ int main() {
 	thread_pool = TrajectoryCount;
 	threads_done = 0;
 
-	thrd_t threads[ThreadCount];
+	pthread_t threads[ThreadCount];
 	size_t index = 0;
 
-	for_each(threads) thrd_create(it, run_simulation_thread_wrapper, nullptr);
-	for_each(threads) thrd_join(*it, nullptr);
+	for_each(threads) pthread_create(it, nullptr, run_simulation_thread_wrapper, nullptr);
+	for_each(threads) pthread_join(*it, nullptr);
 
 	for (int i = 0; i < IntegrationSteps; ++i) {
 		printf("%g\t%g\n",
