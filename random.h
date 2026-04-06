@@ -9,7 +9,7 @@
  */
 
 constexpr uint64_t HighBit = (uint64_t)1 << 63;
-constexpr float TwoPi = 2.0f * M_PIf;
+constexpr float TwoPi = 2.0f * (float)M_PI;
 
 static thread_local uint64_t _random_seed = HighBit;
 
