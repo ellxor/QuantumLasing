@@ -83,7 +83,7 @@ void exponential_hamiltonian_step(wave_vector_t wave, sector_t sector, int excit
 	}
 }
 
-constexpr size_t TotalJumps = 33;
+constexpr size_t TotalJumps = 37;
 typedef typeof(Ground1ToExcitedJumps) LindBladTable;
 
 size_t choose_next_jump(float jump_table[TotalJumps])
@@ -100,8 +100,6 @@ size_t choose_next_jump(float jump_table[TotalJumps])
 
 void lindblad_jump(wave_vector_t wave, LindBladTable table, size_t choice, sector_t *sector, int excitations)
 {
-	assert(excitations >= 0);
-
 	static thread_local wave_vector_t copy;
 	memcpy(copy, wave, sizeof(wave_vector_t));
 	memset(wave, 0, sizeof(wave_vector_t));
@@ -115,8 +113,8 @@ void lindblad_jump(wave_vector_t wave, LindBladTable table, size_t choice, secto
 			for (int n3 = n2; n3 <= n1; ++n3) {
 				index_t index = indexof3(n1, n2, n3, *sector);
 
-				if (table[index][choice].target[0]) wave[table[index][choice].target[0]] += copy[index] * table[index][choice].factor[0];
-				if (table[index][choice].target[1]) wave[table[index][choice].target[1]] += copy[index] * table[index][choice].factor[1];
+				wave[table[index][choice].target[0]] += copy[index] * table[index][choice].factor[0];
+				wave[table[index][choice].target[1]] += copy[index] * table[index][choice].factor[1];
 				next_sector |= table[index][choice].sector;
 			}
 		}
@@ -187,7 +185,7 @@ void run_simulation(int thread_index)
 
 	for (int step = 0; step < IntegrationSteps; ++step) {
 		size_t choice = choose_next_jump(jump_table);
-		size_t table = choice / 8, index = choice % 8;
+		size_t table = choice / 9, index = choice % 9;
 
 		switch (table) {
 			case 0: lindblad_jump(wave, Ground1ToExcitedJumps, index, &sector, excitations += 1); break;
@@ -198,6 +196,8 @@ void run_simulation(int thread_index)
 				if (index == 0) lindblad_photon_annihilation(wave, sector, &excitations);
 				else exponential_hamiltonian_step(wave, sector, excitations);
 		}
+
+		assert(excitations >= 0);
 
 		float inner_product = compute_norm(wave, sector);
 		float scale = 1.0f / sqrtf(inner_product);
@@ -212,7 +212,8 @@ void run_simulation(int thread_index)
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
 			for (int n2 = nu3; n2 <= nu2; ++n2) {
 				int excited_atoms = N - n1 - n2;
-				int photon_count = max(0, excitations - excited_atoms);
+				int photon_count = excitations - excited_atoms;
+				if (photon_count < 0) continue;
 
 				for (int n3 = n2; n3 <= n1; ++n3) {
 					index_t index = indexof3(n1, n2, n3, sector);
@@ -262,7 +263,7 @@ void *run_simulation_thread_wrapper(void *) {
 
 int main() {
 	fprintf(stderr, "Parameters: N = %d, GammaUp = %g\n", N, GammaUp);
-	fprintf(stderr, "Allocating tables: %zu MB.\n", (TotalTableBytes * ThreadCount) >> 20);
+	fprintf(stderr, "Allocating tables: %zu KB.\n", (TotalTableBytes * ThreadCount) >> 10);
 
 	thread_pool = TrajectoryCount;
 	threads_done = 0;
