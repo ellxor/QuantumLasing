@@ -29,5 +29,5 @@ constexpr float TimeStep = 1e-4f;
 constexpr int IntegrationSteps = 100'000;
 
 // Misc.
-constexpr int TrajectoryCount = 500;
-constexpr int ThreadCount = 24;
+constexpr int TrajectoryCount = 1;
+constexpr int ThreadCount = 1;

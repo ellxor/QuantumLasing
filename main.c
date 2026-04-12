@@ -7,19 +7,16 @@
 #include <pthread.h>
 
 #include "clebsh_gordan.c"
-#include "parameters.h"
-#include "random.h"
-#include "utility.h"
+#include "parameters.c"
+#include "random.c"
+#include "utility.c"
 
 typedef complex float wave_vector_t[Dimension];
 
 
-void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, sector_t sector, int excitations)
+void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, int nu1, int nu2, int nu3, int excitations)
 {
 	memset(dst, 0, sizeof(wave_vector_t));
-
-	int nu1, nu2, nu3;
-	read_sector(sector, &nu1, &nu2, &nu3);
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
@@ -28,7 +25,7 @@ void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, sector_t sect
 			if (photon_count < 0) continue;
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3, sector);
+				index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
 				dst[index] -= src[index] * TimeStep/2 * (Kappa*photon_count + GammaDown*(2 * excited_atoms) + GammaUp*(n1 + n2));
 
 				auto coeff = src[index] * I * TimeStep;
@@ -39,32 +36,30 @@ void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, sector_t sect
 				for_each(ExcitedToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 				for_each(ExcitedToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 
-				constexpr auto c1 = cosf(Phi) + I*sinf(Phi);
-				constexpr auto c2 = cosf(Phi) - I*sinf(Phi);
+				// constexpr auto c1 = cosf(Phi) + I*sinf(Phi);
+				// constexpr auto c2 = cosf(Phi) - I*sinf(Phi);
 
-				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c1;
-				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c2;
+				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega; // * c1;
+				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega; // * c2;
 			}
 		}
 	}
 }
 
 
-void exponential_hamiltonian_step(wave_vector_t wave, sector_t sector, int excitations) {
+void exponential_hamiltonian_step(wave_vector_t wave, int nu1, int nu2, int nu3, int excitations) {
 	constexpr int RungeKuttaPoly = 4; // order of integration step
 
 	// In this case of an exponential and linear Hamiltonian, the Runge-Kutta method
 	// is identical to a Taylor series expansion, so this is performed for efficiency.
-	static thread_local wave_vector_t _a, _b; // Create two temporary wave vectors as a double-buffering technique.
+	alignas(64) static thread_local wave_vector_t _a, _b; // Create two temporary wave vectors as a double-buffering technique.
 	auto a = wave; // Controlled by pointers which are cheap to swap.
 	auto b = _b;
 
-	int nu1, nu2, nu3;
-	read_sector(sector, &nu1, &nu2, &nu3);
 	int factorial = 1;
 
 	for (int i = 1; i <= RungeKuttaPoly; ++i) {
-		linear_hamiltonian_step(b, a, sector, excitations); // b now contains -i Heff dt a
+		linear_hamiltonian_step(b, a, nu1, nu2, nu3, excitations); // b now contains -i Heff dt a
 
 		factorial *= i;
 		float factor = 1.0f / factorial;
@@ -72,7 +67,7 @@ void exponential_hamiltonian_step(wave_vector_t wave, sector_t sector, int excit
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
 			for (int n2 = nu3; n2 <= nu2; ++n2) {
 				for (int n3 = n2; n3 <= n1; ++n3) {
-					index_t index = indexof3(n1, n2, n3, sector);
+					index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
 					wave[index] += factor * b[index];
 				}
 			}
@@ -97,21 +92,22 @@ size_t choose_next_jump(float jump_table[TotalJumps])
 	return index;
 }
 
+atomic(size_t) jump_count = 0;
 
-void lindblad_jump(wave_vector_t wave, LindBladTable table, size_t choice, sector_t *sector, int excitations)
+void lindblad_jump(wave_vector_t wave, LindBladTable table, size_t choice, int *nu1, int *nu2, int *nu3, int excitations)
 {
-	static thread_local wave_vector_t copy;
+	++jump_count;
+
+	alignas(64) static thread_local wave_vector_t copy;
 	memcpy(copy, wave, sizeof(wave_vector_t));
 	memset(wave, 0, sizeof(wave_vector_t));
 
-	int nu1, nu2, nu3;
-	read_sector(*sector, &nu1, &nu2, &nu3);
 	sector_t next_sector = 0;
 
-	for (int n1 = nu2; n1 <= nu1; ++n1) {
-		for (int n2 = nu3; n2 <= nu2; ++n2) {
+	for (int n1 = *nu2; n1 <= *nu1; ++n1) {
+		for (int n2 = *nu3; n2 <= *nu2; ++n2) {
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3, *sector);
+				index_t index = indexof6(n1, n2, n3, *nu1, *nu2, *nu3);
 
 				wave[table[index][choice].target[0]] += copy[index] * table[index][choice].factor[0];
 				wave[table[index][choice].target[1]] += copy[index] * table[index][choice].factor[1];
@@ -120,42 +116,34 @@ void lindblad_jump(wave_vector_t wave, LindBladTable table, size_t choice, secto
 		}
 	}
 
-	update_tables(next_sector, excitations);
-	*sector = next_sector;
+	read_sector(next_sector, nu1, nu2, nu3);
+	update_tables(*nu1, *nu2, *nu3, excitations);
 }
 
 
-void lindblad_photon_annihilation(wave_vector_t wave, sector_t sector, int *excitations)
+void lindblad_photon_annihilation(wave_vector_t wave, int nu1, int nu2, int nu3, int excitations)
 {
-	int nu1, nu2, nu3;
-	read_sector(sector, &nu1, &nu2, &nu3);
-
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			int excited_atoms = N - n1 - n2;
-			int photon_count = *excitations - excited_atoms;
-			photon_count = max(0, photon_count);
+			int photon_count = max(0, excitations - excited_atoms + 1);
 
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3, sector);
+				index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
 				wave[index] *= sqrtf(photon_count);
 			}
 		}
 	}
-
-	*excitations -= 1;
 }
 
 
-float compute_norm(wave_vector_t wave, sector_t sector) {
-	int nu1, nu2, nu3;
-	read_sector(sector, &nu1, &nu2, &nu3);
+float compute_norm(wave_vector_t wave, int nu1, int nu2, int nu3) {
 	float norm = 0;
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
 			for (int n3 = n2; n3 <= n1; ++n3) {
-				index_t index = indexof3(n1, n2, n3, sector);
+				index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
 				norm += cnormf(wave[index]);
 			}
 		}
@@ -173,14 +161,16 @@ void run_simulation(int thread_index)
 	set_random_seed(thread_index);
 	constexpr struct GT initial = {{ (N+1)/2, N,0, N,0,0 }}; // half ground1, half ground2
 
-	sector_t sector = sectorof(initial);
+	int nu1 = initial.M[3];
+	int nu2 = initial.M[4];
+	int nu3 = initial.M[5];
 	int excitations = N - initial.M[1] - initial.M[2];
 
-	static thread_local wave_vector_t wave;
+	alignas(64) static thread_local wave_vector_t wave;
 	memset(wave, 0, sizeof(wave_vector_t));
-	wave[indexof(initial, sector)] = 1;
+	wave[indexof(initial)] = 1;
 
-	update_tables(sector, excitations);
+	update_tables(nu1, nu2, nu3, excitations);
 	float jump_table[TotalJumps] = {0};
 
 	for (int step = 0; step < IntegrationSteps; ++step) {
@@ -188,25 +178,22 @@ void run_simulation(int thread_index)
 		size_t table = choice / 9, index = choice % 9;
 
 		switch (table) {
-			case 0: lindblad_jump(wave, Ground1ToExcitedJumps, index, &sector, excitations += 1); break;
-			case 1: lindblad_jump(wave, Ground2ToExcitedJumps, index, &sector, excitations += 1); break;
-			case 2: lindblad_jump(wave, ExcitedToGround1Jumps, index, &sector, excitations -= 1); break;
-			case 3: lindblad_jump(wave, ExcitedToGround2Jumps, index, &sector, excitations -= 1); break;
-			case 4:
-				if (index == 0) lindblad_photon_annihilation(wave, sector, &excitations);
-				else exponential_hamiltonian_step(wave, sector, excitations);
+			case 0: lindblad_jump(wave, Ground1ToExcitedJumps, index, &nu1, &nu2, &nu3, excitations += 1); break;
+			case 1: lindblad_jump(wave, Ground2ToExcitedJumps, index, &nu1, &nu2, &nu3, excitations += 1); break;
+			case 2: lindblad_jump(wave, ExcitedToGround1Jumps, index, &nu1, &nu2, &nu3, excitations -= 1); break;
+			case 3: lindblad_jump(wave, ExcitedToGround2Jumps, index, &nu1, &nu2, &nu3, excitations -= 1); break;
+			case 4: (index == 0) ? lindblad_photon_annihilation(wave, nu1, nu2, nu3, excitations -= 1)
+			                     : exponential_hamiltonian_step(wave, nu1, nu2, nu3, excitations);
 		}
 
 		assert(excitations >= 0);
 
-		float inner_product = compute_norm(wave, sector);
+		float inner_product = compute_norm(wave, nu1, nu2, nu3);
 		float scale = 1.0f / sqrtf(inner_product);
 
 		float expected_photon_count = 0;
 		float expected_excited_atoms = 0;
 
-		int nu1, nu2, nu3;
-		read_sector(sector, &nu1, &nu2, &nu3);
 		memset(jump_table, 0, sizeof jump_table);
 
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
@@ -216,7 +203,7 @@ void run_simulation(int thread_index)
 				if (photon_count < 0) continue;
 
 				for (int n3 = n2; n3 <= n1; ++n3) {
-					index_t index = indexof3(n1, n2, n3, sector);
+					index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
 					wave[index] *= scale;
 
 					auto norm = cnormf(wave[index]);
@@ -279,5 +266,6 @@ int main() {
 			(double)average_excited_atoms[i] / RecordScaling / TrajectoryCount);
 	}
 
-	printf("# Time per trajectory: %zu ms\n", millis / TrajectoryCount);
+	fprintf(stderr, "Time per trajectory: %zu ms (%zu)\n", millis / TrajectoryCount, table_millis / TrajectoryCount);
+	fprintf(stderr, "Jumps: %zu/%d (%.2f%%)\n", jump_count, TrajectoryCount * IntegrationSteps, 100.0f * jump_count / (TrajectoryCount * IntegrationSteps));
 }
