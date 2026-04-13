@@ -14,9 +14,10 @@
 typedef complex float wave_vector_t[Dimension];
 
 
-void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, int nu1, int nu2, int nu3, int excitations)
+void effective_hamiltonian_step(wave_vector_t dst, int nu1, int nu2, int nu3, int excitations)
 {
-	memset(dst, 0, sizeof(wave_vector_t));
+	alignas(64) static thread_local wave_vector_t src;
+	memcpy(src, dst, sizeof src);
 
 	for (int n1 = nu2; n1 <= nu1; ++n1) {
 		for (int n2 = nu3; n2 <= nu2; ++n2) {
@@ -43,38 +44,6 @@ void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, int nu1, int 
 				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c2;
 			}
 		}
-	}
-}
-
-
-void exponential_hamiltonian_step(wave_vector_t wave, int nu1, int nu2, int nu3, int excitations) {
-	constexpr int RungeKuttaPoly = 4; // order of integration step
-
-	// In this case of an exponential and linear Hamiltonian, the Runge-Kutta method
-	// is identical to a Taylor series expansion, so this is performed for efficiency.
-	alignas(64) static thread_local wave_vector_t _a, _b; // Create two temporary wave vectors as a double-buffering technique.
-	auto a = wave; // Controlled by pointers which are cheap to swap.
-	auto b = _b;
-
-	int factorial = 1;
-
-	for (int i = 1; i <= RungeKuttaPoly; ++i) {
-		linear_hamiltonian_step(b, a, nu1, nu2, nu3, excitations); // b now contains -i Heff dt a
-
-		factorial *= i;
-		float factor = 1.0f / factorial;
-
-		for (int n1 = nu2; n1 <= nu1; ++n1) {
-			for (int n2 = nu3; n2 <= nu2; ++n2) {
-				for (int n3 = n2; n3 <= n1; ++n3) {
-					index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
-					wave[index] += factor * b[index];
-				}
-			}
-		}
-
-		if (i == 1) a = _a; // a is temporarily set to wave for first iteration to avoid a copy
-		swap(a, b); // perform double-buffering
 	}
 }
 
@@ -139,6 +108,7 @@ float compute_norm(wave_vector_t wave, int nu1, int nu2, int nu3) {
 	return norm;
 }
 
+
 constexpr float RecordScaling = 1e6;
 atomic(size_t) average_photon_count[IntegrationSteps];
 atomic(size_t) average_excited_atoms[IntegrationSteps];
@@ -165,7 +135,7 @@ void run_simulation(int thread_index)
 		float t = 0; for_each(jump_table) t += *it;
 
 		if (likely(r >= t)) {
-			exponential_hamiltonian_step(wave, nu1, nu2, nu3, excitations);
+			effective_hamiltonian_step(wave, nu1, nu2, nu3, excitations);
 		}
 
 		else if (r >= t - jump_table[4]) {
