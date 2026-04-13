@@ -111,6 +111,8 @@ float compute_norm(wave_vector_t wave, int nu1, int nu2, int nu3) {
 
 constexpr float RecordScaling = 1e6;
 atomic(size_t) average_photon_count[IntegrationSteps];
+atomic(size_t) average_ground1_atoms[IntegrationSteps];
+atomic(size_t) average_ground2_atoms[IntegrationSteps];
 atomic(size_t) average_excited_atoms[IntegrationSteps];
 
 void run_simulation(int thread_index)
@@ -233,6 +235,8 @@ void run_simulation(int thread_index)
 		jump_table[4] = TimeStep * Kappa     * expected_photon_count;
 
 		average_photon_count[step] += (size_t)(expected_photon_count * RecordScaling);
+		average_ground1_atoms[step] += (size_t)(expected_ground1_atoms * RecordScaling);
+		average_ground2_atoms[step] += (size_t)(expected_ground2_atoms * RecordScaling);
 		average_excited_atoms[step] += (size_t)(expected_excited_atoms * RecordScaling);
 	}
 }
@@ -261,7 +265,7 @@ void *run_simulation_thread_wrapper(void *) {
 
 int main() {
 	fprintf(stderr, "Parameters: N = %d, GammaUp = %g\n", N, GammaUp);
-	fprintf(stderr, "Allocating tables: %zu KB (%zu : %zu).\n", (TotalTableBytes * ThreadCount) >> 10, (sizeof LindbladJumps) >> 10, (9 * sizeof(wave_vector_t)) >> 10);
+	fprintf(stderr, "Allocating tables: %zu KB.\n", (TotalTableBytes * ThreadCount) >> 10);
 
 	thread_pool = TrajectoryCount;
 	threads_done = 0;
@@ -272,9 +276,12 @@ int main() {
 	for_each(threads) pthread_join(*it, nullptr);
 
 	for (int i = 0; i < IntegrationSteps; ++i) {
-		printf("%g\t%g\n",
+		printf("%g\t%g\t%g\t%g\n",
 			(double)average_photon_count[i]  / RecordScaling / TrajectoryCount,
-			(double)average_excited_atoms[i] / RecordScaling / TrajectoryCount);
+			(double)average_ground1_atoms[i] / RecordScaling / TrajectoryCount,
+			(double)average_ground2_atoms[i] / RecordScaling / TrajectoryCount,
+			(double)average_excited_atoms[i] / RecordScaling / TrajectoryCount
+		);
 	}
 
 	fprintf(stderr, "Time per trajectory: %zu ms (%zu+%zu)\n", millis / TrajectoryCount, table_millis[0] / TrajectoryCount, table_millis[1] / TrajectoryCount);

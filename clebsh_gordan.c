@@ -8,7 +8,7 @@
 #include "parameters.c"
 #include "utility.c"
 
-#define triangle(n) ((n)*(n+1)/2)
+#define triangle(n) ((n)*((n)+1)/2)
 
 constexpr size_t Dimension = 2048 > (N*N*N/8) ? 2048 : (N*N*N/8);
 constexpr int Levels = 3; // three-level-system
@@ -95,9 +95,9 @@ typedef typeof(LindbladJumps) LindBladTable;
 
 constexpr size_t TotalTableBytes
 	= sizeof Ground1ToExcited + sizeof Ground2ToExcited
-        + sizeof ExcitedToGround1 + sizeof ExcitedToGround2
-        + sizeof Ground1ToGround2 + sizeof Ground2ToGround1
-        + sizeof LindbladJumps;
+	+ sizeof ExcitedToGround1 + sizeof ExcitedToGround2
+	+ sizeof Ground1ToGround2 + sizeof Ground2ToGround1
+	+ sizeof LindbladJumps;
 
 constexpr tau_t SymmetryChanges[Levels][6] = {
 	[Ground1] = {{1,1,1}, {1,2,1}, {1,1,2}, {1,2,2}, {1,1,3}, {1,2,3}},
