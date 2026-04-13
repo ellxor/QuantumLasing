@@ -36,11 +36,11 @@ void linear_hamiltonian_step(wave_vector_t dst, wave_vector_t src, int nu1, int 
 				for_each(ExcitedToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 				for_each(ExcitedToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * GCoupling * sqrtf(photon_count + 1);
 
-				// constexpr auto c1 = cosf(Phi) + I*sinf(Phi);
-				// constexpr auto c2 = cosf(Phi) - I*sinf(Phi);
+				constexpr auto c1 = cosf(Phi) + I*sinf(Phi);
+				constexpr auto c2 = cosf(Phi) - I*sinf(Phi);
 
-				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega; // * c1;
-				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega; // * c2;
+				for_each(Ground1ToGround2[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c1;
+				for_each(Ground2ToGround1[index]) if (it->target) dst[it->target] -= it->factor * coeff * Omega * c2;
 			}
 		}
 	}
@@ -78,19 +78,6 @@ void exponential_hamiltonian_step(wave_vector_t wave, int nu1, int nu2, int nu3,
 	}
 }
 
-constexpr size_t TotalJumps = 37;
-typedef typeof(Ground1ToExcitedJumps) LindBladTable;
-
-size_t choose_next_jump(float jump_table[TotalJumps])
-{
-	size_t index = 0;
-
-	float accumulator = 0;
-	float r = random_uniform();
-
-	while (index < TotalJumps and (accumulator += jump_table[index]) < r) ++index;
-	return index;
-}
 
 atomic(size_t) jump_count = 0;
 
@@ -117,7 +104,7 @@ void lindblad_jump(wave_vector_t wave, LindBladTable table, size_t choice, int *
 	}
 
 	read_sector(next_sector, nu1, nu2, nu3);
-	update_tables(*nu1, *nu2, *nu3, excitations);
+	update_tables(*nu1, *nu2, *nu3, excitations, 0, 0);
 }
 
 
@@ -170,20 +157,73 @@ void run_simulation(int thread_index)
 	memset(wave, 0, sizeof(wave_vector_t));
 	wave[indexof(initial)] = 1;
 
-	update_tables(nu1, nu2, nu3, excitations);
-	float jump_table[TotalJumps] = {0};
+	update_tables(nu1, nu2, nu3, excitations, 0, 0);
+	float jump_table[5] = {0};
 
 	for (int step = 0; step < IntegrationSteps; ++step) {
-		size_t choice = choose_next_jump(jump_table);
-		size_t table = choice / 9, index = choice % 9;
+		float r = random_uniform();
+		float t = 0; for_each(jump_table) t += *it;
 
-		switch (table) {
-			case 0: lindblad_jump(wave, Ground1ToExcitedJumps, index, &nu1, &nu2, &nu3, excitations += 1); break;
-			case 1: lindblad_jump(wave, Ground2ToExcitedJumps, index, &nu1, &nu2, &nu3, excitations += 1); break;
-			case 2: lindblad_jump(wave, ExcitedToGround1Jumps, index, &nu1, &nu2, &nu3, excitations -= 1); break;
-			case 3: lindblad_jump(wave, ExcitedToGround2Jumps, index, &nu1, &nu2, &nu3, excitations -= 1); break;
-			case 4: (index == 0) ? lindblad_photon_annihilation(wave, nu1, nu2, nu3, excitations -= 1)
-			                     : exponential_hamiltonian_step(wave, nu1, nu2, nu3, excitations);
+		if (likely(r >= t)) {
+			exponential_hamiltonian_step(wave, nu1, nu2, nu3, excitations);
+		}
+
+		else if (r >= t - jump_table[4]) {
+			lindblad_photon_annihilation(wave, nu1, nu2, nu3, excitations -= 1);
+		}
+
+		else {
+			size_t choice = 0;
+			float accumulator = 0;
+
+			for_each(jump_table) {
+				if ((accumulator + *it) >= r) break;
+				accumulator += *it;
+				++choice;
+			}
+
+			energy_level_t as[] = { Excited, Excited, Ground1, Ground2 };
+			energy_level_t bs[] = { Ground1, Ground2, Excited, Excited };
+
+			float factors[] = { GammaUp, GammaUp, GammaDown, GammaDown };
+			float factor = TimeStep * factors[choice];
+
+			int excitation_diffs[] = { +1, +1, -1, -1 };
+			int excitation_diff = excitation_diffs[choice];
+
+			auto a = as[choice];
+			auto b = bs[choice];
+
+			update_tables(nu1, nu2, nu3, excitations, a, b);
+			float jump_sub_table[9] = {0};
+
+			for (int n1 = nu2; n1 <= nu1; ++n1) {
+				for (int n2 = nu3; n2 <= nu2; ++n2) {
+					int excited_atoms = N - n1 - n2;
+					int photon_count = excitations - excited_atoms;
+					if (photon_count < 0) continue;
+
+					for (int n3 = n2; n3 <= n1; ++n3) {
+						index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
+						auto norm = cnormf(wave[index]);
+
+						size_t jump_index = 0;
+						for_each(LindbladJumps[index]) jump_sub_table[jump_index++] += factor * norm * (powf(it->factor[0], 2) + powf(it->factor[1], 2));
+					}
+				}
+			}
+
+			r -= accumulator;
+			choice = 0, accumulator = 0;
+
+			for_each(jump_sub_table) {
+				if ((accumulator + *it) >= r) break;
+				accumulator += *it;
+				++choice;
+			}
+
+			assert(choice < 9);
+			lindblad_jump(wave, LindbladJumps, choice, &nu1, &nu2, &nu3, excitations += excitation_diff);
 		}
 
 		assert(excitations >= 0);
@@ -193,8 +233,8 @@ void run_simulation(int thread_index)
 
 		float expected_photon_count = 0;
 		float expected_excited_atoms = 0;
-
-		memset(jump_table, 0, sizeof jump_table);
+		float expected_ground1_atoms = 0;
+		float expected_ground2_atoms = 0;
 
 		for (int n1 = nu2; n1 <= nu1; ++n1) {
 			for (int n2 = nu3; n2 <= nu2; ++n2) {
@@ -209,17 +249,18 @@ void run_simulation(int thread_index)
 					auto norm = cnormf(wave[index]);
 					expected_photon_count += photon_count * norm;
 					expected_excited_atoms += excited_atoms * norm;
-
-					size_t jump_index = 0;
-					for_each(Ground1ToExcitedJumps[index]) jump_table[jump_index++] += TimeStep * GammaUp   * norm * (powf(it->factor[0], 2) + powf(it->factor[1], 2));
-					for_each(Ground2ToExcitedJumps[index]) jump_table[jump_index++] += TimeStep * GammaUp   * norm * (powf(it->factor[0], 2) + powf(it->factor[1], 2));
-					for_each(ExcitedToGround1Jumps[index]) jump_table[jump_index++] += TimeStep * GammaDown * norm * (powf(it->factor[0], 2) + powf(it->factor[1], 2));
-					for_each(ExcitedToGround2Jumps[index]) jump_table[jump_index++] += TimeStep * GammaDown * norm * (powf(it->factor[0], 2) + powf(it->factor[1], 2));
+					expected_ground1_atoms += n3 * norm;
 				}
 			}
 		}
 
-		jump_table[TotalJumps - 1] = TimeStep * Kappa * expected_photon_count;
+		expected_ground2_atoms = N - expected_ground1_atoms - expected_excited_atoms;
+
+		jump_table[0] = TimeStep * GammaUp   * expected_ground1_atoms;
+		jump_table[1] = TimeStep * GammaUp   * expected_ground2_atoms;
+		jump_table[2] = TimeStep * GammaDown * expected_excited_atoms;
+		jump_table[3] = TimeStep * GammaDown * expected_excited_atoms;
+		jump_table[4] = TimeStep * Kappa     * expected_photon_count;
 
 		average_photon_count[step] += (size_t)(expected_photon_count * RecordScaling);
 		average_excited_atoms[step] += (size_t)(expected_excited_atoms * RecordScaling);
@@ -250,7 +291,7 @@ void *run_simulation_thread_wrapper(void *) {
 
 int main() {
 	fprintf(stderr, "Parameters: N = %d, GammaUp = %g\n", N, GammaUp);
-	fprintf(stderr, "Allocating tables: %zu KB.\n", (TotalTableBytes * ThreadCount) >> 10);
+	fprintf(stderr, "Allocating tables: %zu KB (%zu : %zu).\n", (TotalTableBytes * ThreadCount) >> 10, (sizeof LindbladJumps) >> 10, (9 * sizeof(wave_vector_t)) >> 10);
 
 	thread_pool = TrajectoryCount;
 	threads_done = 0;
@@ -266,6 +307,6 @@ int main() {
 			(double)average_excited_atoms[i] / RecordScaling / TrajectoryCount);
 	}
 
-	fprintf(stderr, "Time per trajectory: %zu ms (%zu)\n", millis / TrajectoryCount, table_millis / TrajectoryCount);
+	fprintf(stderr, "Time per trajectory: %zu ms (%zu+%zu)\n", millis / TrajectoryCount, table_millis[0] / TrajectoryCount, table_millis[1] / TrajectoryCount);
 	fprintf(stderr, "Jumps: %zu/%d (%.2f%%)\n", jump_count, TrajectoryCount * IntegrationSteps, 100.0f * jump_count / (TrajectoryCount * IntegrationSteps));
 }

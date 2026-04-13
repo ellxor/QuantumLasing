@@ -7,7 +7,7 @@
 #define atomic(T) _Atomic(T)
 #define swap(a,b) do { auto _tmp = a; a = b; b = _tmp; } while(0)
 #define for_each(array)	for (auto it = array; it < array + (sizeof(array)/sizeof(array)[0]); ++it)
-
+#define likely(x)   __builtin_expect(!!(x), 1)
 
 static inline int min(int a, int b) { return (a < b) ? a : b; }
 static inline int max(int a, int b) { return (a > b) ? a : b; }

@@ -10,9 +10,8 @@
 
 #define triangle(n) ((n)*(n+1)/2)
 
-
 constexpr size_t Dimension = 2048 > (N*N*N/8) ? 2048 : (N*N*N/8);
-constexpr size_t Levels = 3; // three-level-system
+constexpr int Levels = 3; // three-level-system
 
 typedef enum EnergyLevel energy_level_t;
 typedef enum BoxChange box_change_t;
@@ -91,18 +90,14 @@ thread_local struct HamiltonianTableEntry ExcitedToGround2[Dimension][2];
 thread_local struct HamiltonianTableEntry Ground1ToGround2[Dimension][1];
 thread_local struct HamiltonianTableEntry Ground2ToGround1[Dimension][1];
 
-thread_local struct LindbladTableEntry Ground1ToExcitedJumps[Dimension][9];
-thread_local struct LindbladTableEntry Ground2ToExcitedJumps[Dimension][9];
-thread_local struct LindbladTableEntry ExcitedToGround1Jumps[Dimension][9];
-thread_local struct LindbladTableEntry ExcitedToGround2Jumps[Dimension][9];
+thread_local struct LindbladTableEntry LindbladJumps[Dimension][9];
+typedef typeof(LindbladJumps) LindBladTable;
 
 constexpr size_t TotalTableBytes
 	= sizeof Ground1ToExcited + sizeof Ground2ToExcited
         + sizeof ExcitedToGround1 + sizeof ExcitedToGround2
         + sizeof Ground1ToGround2 + sizeof Ground2ToGround1
-        + sizeof Ground1ToExcitedJumps + sizeof Ground2ToExcitedJumps
-        + sizeof ExcitedToGround1Jumps + sizeof ExcitedToGround2Jumps;
-
+        + sizeof LindbladJumps;
 
 constexpr tau_t SymmetryChanges[Levels][6] = {
 	[Ground1] = {{1,1,1}, {1,2,1}, {1,1,2}, {1,2,2}, {1,1,3}, {1,2,3}},
@@ -247,9 +242,9 @@ void lindblad_clebsh_gordan(struct GT W_nu, energy_level_t a, energy_level_t b, 
 	}
 }
 
-atomic(size_t) table_millis;
+atomic(size_t) table_millis[2];
 
-void update_tables(int nu1, int nu2, int nu3, int excitations) {
+void update_tables(int nu1, int nu2, int nu3, int excitations, energy_level_t a, energy_level_t b) {
 	auto start = get_time_from_os();
 
 	constexpr struct Combination GroundToGroundCombinations[] = {
@@ -268,17 +263,18 @@ void update_tables(int nu1, int nu2, int nu3, int excitations) {
 		{4,1,12}, {5,1,13}, {0,2,14}, {1,2,15}, {2,2,16}, {3,2,17},
 	};
 
-	memset(Ground1ToExcited, 0, sizeof Ground1ToExcited);
-	memset(Ground2ToExcited, 0, sizeof Ground2ToExcited);
-	memset(ExcitedToGround1, 0, sizeof ExcitedToGround1);
-	memset(ExcitedToGround2, 0, sizeof ExcitedToGround2);
-	memset(Ground1ToGround2, 0, sizeof Ground1ToGround2);
-	memset(Ground2ToGround1, 0, sizeof Ground2ToGround1);
+	bool lindblad_update = a or b;
 
-	memset(Ground1ToExcitedJumps, 0, sizeof Ground1ToExcitedJumps);
-	memset(Ground2ToExcitedJumps, 0, sizeof Ground2ToExcitedJumps);
-	memset(ExcitedToGround1Jumps, 0, sizeof ExcitedToGround1Jumps);
-	memset(ExcitedToGround2Jumps, 0, sizeof ExcitedToGround2Jumps);
+	if (lindblad_update) {
+		memset(LindbladJumps, 0, sizeof LindbladJumps);
+	} else {
+		memset(Ground1ToExcited, 0, sizeof Ground1ToExcited);
+		memset(Ground2ToExcited, 0, sizeof Ground2ToExcited);
+		memset(ExcitedToGround1, 0, sizeof ExcitedToGround1);
+		memset(ExcitedToGround2, 0, sizeof ExcitedToGround2);
+		memset(Ground1ToGround2, 0, sizeof Ground1ToGround2);
+		memset(Ground2ToGround1, 0, sizeof Ground2ToGround1);
+	}
 
 	struct GT W_nu = {{ [3] = nu1, [4] = nu2, [5] = nu3 }};
 	double ratios[Levels] = {};
@@ -302,21 +298,21 @@ void update_tables(int nu1, int nu2, int nu3, int excitations) {
 
 				index_t index = indexof6(n1, n2, n3, nu1, nu2, nu3);
 
-				hamiltonian_clebsh_gordan(W_nu, Excited, Ground1, ratios, GroundToExcitedCombinations, Ground1ToExcited[index]);
-				hamiltonian_clebsh_gordan(W_nu, Excited, Ground2, ratios, GroundToExcitedCombinations, Ground2ToExcited[index]);
-				hamiltonian_clebsh_gordan(W_nu, Ground1, Excited, ratios, ExcitedToGroundCombinations, ExcitedToGround1[index]);
-				hamiltonian_clebsh_gordan(W_nu, Ground2, Excited, ratios, ExcitedToGroundCombinations, ExcitedToGround1[index]);
-				hamiltonian_clebsh_gordan(W_nu, Ground1, Ground1, ratios, GroundToGroundCombinations,  Ground1ToGround2[index]);
-				hamiltonian_clebsh_gordan(W_nu, Ground1, Ground2, ratios, GroundToGroundCombinations,  Ground2ToGround1[index]);
-
-				lindblad_clebsh_gordan(W_nu, Excited, Ground1, ratios, GroundToExcitedCombinations, Ground1ToExcitedJumps[index]);
-				lindblad_clebsh_gordan(W_nu, Excited, Ground2, ratios, GroundToExcitedCombinations, Ground2ToExcitedJumps[index]);
-				lindblad_clebsh_gordan(W_nu, Ground1, Excited, ratios, ExcitedToGroundCombinations, ExcitedToGround1Jumps[index]);
-				lindblad_clebsh_gordan(W_nu, Ground2, Excited, ratios, ExcitedToGroundCombinations, ExcitedToGround2Jumps[index]);
+				if (lindblad_update) {
+					auto combinations = (a == Excited) ? GroundToExcitedCombinations : ExcitedToGroundCombinations;
+					lindblad_clebsh_gordan(W_nu, a, b, ratios, combinations, LindbladJumps[index]);
+				} else {
+					hamiltonian_clebsh_gordan(W_nu, Excited, Ground1, ratios, GroundToExcitedCombinations, Ground1ToExcited[index]);
+					hamiltonian_clebsh_gordan(W_nu, Excited, Ground2, ratios, GroundToExcitedCombinations, Ground2ToExcited[index]);
+					hamiltonian_clebsh_gordan(W_nu, Ground1, Excited, ratios, ExcitedToGroundCombinations, ExcitedToGround1[index]);
+					hamiltonian_clebsh_gordan(W_nu, Ground2, Excited, ratios, ExcitedToGroundCombinations, ExcitedToGround1[index]);
+					hamiltonian_clebsh_gordan(W_nu, Ground1, Ground1, ratios, GroundToGroundCombinations,  Ground1ToGround2[index]);
+					hamiltonian_clebsh_gordan(W_nu, Ground1, Ground2, ratios, GroundToGroundCombinations,  Ground2ToGround1[index]);
+				}
 			}
 		}
 	}
 
 	auto end = get_time_from_os();
-	table_millis += 1000 * (end - start);
+	table_millis[lindblad_update] += 1000 * (end - start);
 }
