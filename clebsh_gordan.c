@@ -56,16 +56,15 @@ struct Combination {
 static inline sector_t sectorof(struct GT W_nu) {
 	int nu1 = W_nu.M[3];
 	int nu2 = W_nu.M[4];
-	int nu3 = W_nu.M[5];
 
-	static_assert(N < 256, "number of atoms does not fit into a single byte");
-	return nu1 | nu2 << 8 | nu3 << 16;
+	static_assert(N < UINT16_MAX, "number of atoms does not fit into 16 bits");
+	return nu1 | nu2 << 16; // nu3 = N - nu1 - nu2
 }
 
 static inline void read_sector(sector_t sector, int *nu1, int *nu2, int *nu3) {
-	*nu1 =  sector        & 0xff;
-	*nu2 = (sector >>  8) & 0xff;
-	*nu3 = (sector >> 16) & 0xff;
+	*nu1 =  sector        & UINT16_MAX;
+	*nu2 = (sector >> 16) & UINT16_MAX;
+	*nu3 = N - *nu1 - *nu2;
 }
 
 static inline index_t indexof6(int n1, int n2, int n3, int nu1, int nu2, int nu3) {
